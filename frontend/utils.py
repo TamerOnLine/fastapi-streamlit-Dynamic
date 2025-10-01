@@ -1,51 +1,63 @@
 from __future__ import annotations
-
 import base64
 import json
-import mimetypes
 import os
 from pathlib import Path
+from typing import Dict, Optional, Tuple
 import streamlit as st
 
-PHOTO_BYTES_KEY = "photo_bytes"
-PHOTO_MIME_KEY = "photo_mime"
-PHOTO_NAME_KEY = "photo_name"
+DEFAULTS: Dict[str, object] = {
+    "name": "",
+    "location": "",
+    "phone": "",
+    "email": "",
+    "github": "",
+    "linkedin": "",
+    "birthdate": "",
+    "skills_text": "",
+    "languages_text": "",
+    "projects_text": "",
+    "education_text": "",
+    "sections_left_text": "",
+    "sections_right_text": "",
+    "rtl_mode": False,
+    "api_base": os.getenv("API_BASE_URL", "http://127.0.0.1:8000"),
+    # photo
+    "photo_bytes": None,
+    "photo_mime": None,
+    "photo_name": None,
+    # pdf
+    "pdf_bytes": None,
+    "pdf_name": "resume.pdf",
+}
 
+def init_defaults() -> None:
+    for k, v in DEFAULTS.items():
+        st.session_state.setdefault(k, v)
 
-def persist_json_atomic(path: Path, data: dict) -> None:
-    """Write JSON data to disk atomically using a temporary file."""
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-        f.flush()
-        os.fsync(f.fileno())
-    os.replace(tmp, path)
-
+def atomic_write_json(path: Path, payload: Dict) -> None:
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp.replace(path)
 
 def guess_mime_from_name(name: str | None) -> str:
-    """Guess MIME type based on file name or default to image/png."""
-    mt, _ = mimetypes.guess_type(name or "")
-    return mt or "image/png"
+    if not name:
+        return "image/png"
+    n = name.lower()
+    if n.endswith(".jpg") or n.endswith(".jpeg"):
+        return "image/jpeg"
+    if n.endswith(".webp"):
+        return "image/webp"
+    return "image/png"
 
-
-def encode_photo_to_b64() -> tuple[str | None, str | None, str | None]:
-    """Encode uploaded photo to base64 string along with MIME and filename."""
-    b = st.session_state.get(PHOTO_BYTES_KEY)
-    if not b:
+def encode_photo_to_b64(
+    photo_bytes: Optional[bytes],
+    photo_mime: Optional[str],
+    photo_name: Optional[str],
+) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+    if not photo_bytes:
         return None, None, None
-    return (
-        base64.b64encode(b).decode("utf-8"),
-        st.session_state.get(PHOTO_MIME_KEY) or "image/png",
-        st.session_state.get(PHOTO_NAME_KEY) or "photo.png",
-    )
+    return base64.b64encode(photo_bytes).decode("ascii"), (photo_mime or "image/png"), (photo_name or "photo.png")
 
-
-def decode_photo_from_b64(photo_b64: str, mime: str, name: str) -> None:
-    """Decode base64 photo and update session state."""
-    try:
-        raw = base64.b64decode(photo_b64)
-        st.session_state[PHOTO_BYTES_KEY] = raw
-        st.session_state[PHOTO_MIME_KEY] = mime or "image/png"
-        st.session_state[PHOTO_NAME_KEY] = name or "photo.png"
-    except Exception:
-        st.session_state[PHOTO_BYTES_KEY] = None
+def decode_photo_from_b64(photo_b64: str, photo_mime: Optional[str]) -> bytes:
+    return base64.b64decode(photo_b64.encode("ascii"))
