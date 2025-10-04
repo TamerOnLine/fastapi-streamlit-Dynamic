@@ -1,205 +1,226 @@
-"""
-Utility functions for drawing icon-text lines in PDF using ReportLab.
-Includes automatic social link parsing for GitHub and LinkedIn.
-"""
-
+# icons.py
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Optional, Tuple
+
 from reportlab.pdfgen import canvas
-from reportlab.pdfbase import pdfmetrics
-from reportlab.lib.utils import ImageReader
 from reportlab.lib import colors
+from reportlab.lib.utils import ImageReader
+from reportlab.pdfbase.pdfmetrics import stringWidth
 
-from .text import wrap_text
-from .paths import ICONS_DIR
-from .fonts import UI_FONT  # Remove if unused
-from .config import (
-    LEFT_TEXT_FONT, LEFT_TEXT_FONT_BOLD, LEFT_TEXT_IS_BOLD,
-    LEFT_TEXT_SIZE, LEFT_LINE_GAP,
-    ICON_SIZE, ICON_PAD_X, ICON_TEXT_DY, ICON_VALIGN,
-    HEADING_COLOR, TEXT_SIZE, LEADING_BODY,
-)
-from .social import extract_social_handle
+# =========================
+# إعداد المسارات والأيقونات
+# =========================
+
+# مجلد الأيقونات داخل المشروع
+ICONS_DIR = Path(__file__).parent / "assets" / "icons"
 
 
-def icon_path(name: str) -> Path | None:
-    """Returns the path of the icon file if it exists."""
-    p = ICONS_DIR / name
-    return p if p.exists() else None
+def icon_path(name: str) -> Path:
+    """أعد مسار الأيقونة حسب الاسم."""
+    return (ICONS_DIR / name).resolve()
 
 
-ICON_PATHS: dict[str, Path | None] = {
-    "Ort": icon_path("pin.png"),
-    "Telefon": icon_path("phone.png"),
-    "E-Mail": icon_path("mail.png"),
-    "Geburtsdatum": icon_path("cake.png"),
-    "GitHub": icon_path("github.png"),
-    "LinkedIn": icon_path("linkedin.png"),
+# أيقونات الأقسام
+SECTION_ICON_PATHS: dict[str, Optional[Path]] = {
+    "key_skills": icon_path("skills.png"),
+    "languages": icon_path("globe.png"),
+    "selected_projects": icon_path("laptop.png"),
+    "professional_training": icon_path("cap.png"),
 }
 
+
+def get_section_icon(name: str) -> Optional[Path]:
+    return SECTION_ICON_PATHS.get(name)
+
+
+# =========================
+# أيقونات المعلومات الشخصية
+# =========================
+
+DEFAULT_INFO_ICONS: dict[str, Path] = {
+    "address": icon_path("pin.png"),
+    "location": icon_path("pin.png"),
+    "ort": icon_path("pin.png"),
+    "phone": icon_path("phone.png"),
+    "telefon": icon_path("phone.png"),
+    "mobile": icon_path("phone.png"),
+    "email": icon_path("mail.png"),
+    "e-mail": icon_path("mail.png"),
+    "mail": icon_path("mail.png"),
+    "github": icon_path("github.png"),
+    "linkedin": icon_path("linkedin.png"),
+    "web": icon_path("link.png"),
+    "site": icon_path("link.png"),
+    "birthdate": icon_path("cake.png"),
+    "geburtsdatum": icon_path("cake.png"),
+}
+
+
+# =========================
+# Alias قديم (للتوافق)
+# =========================
+
+ICON_PATHS: dict[str, Path] = {}
+ICON_PATHS.update({k: v for k, v in DEFAULT_INFO_ICONS.items() if v and v.is_file()})
+ICON_PATHS.update({k: v for k, v in SECTION_ICON_PATHS.items() if v and v.is_file()})
+
+
+# =========================
+# أدوات مساعدة للنص والروابط
+# =========================
+
+def _text_width(text: str, font_name: str, font_size: int) -> float:
+    return stringWidth(text, font_name, font_size)
+
+
+def _maybe_make_link(value: str, label: Optional[str] = None) -> Optional[str]:
+    """توليد روابط ذكية (mailto, tel, github, linkedin...)"""
+    v = (value or "").strip()
+
+    if v.startswith("http://") or v.startswith("https://"):
+        return v
+    if "@" in v and " " not in v:
+        return f"mailto:{v}"
+    if (label or "").lower() in {"telefon", "phone", "mobile"}:
+        digits = "".join(ch for ch in v if ch.isdigit() or ch == "+")
+        return f"tel:{digits}" if digits else None
+    if (label or "").lower() == "github":
+        return f"https://github.com/{v}"
+    if (label or "").lower() == "linkedin":
+        return f"https://www.linkedin.com/in/{v}"
+
+    return None
+
+
+# =========================
+# رسم عنوان قسم + أيقونة
+# =========================
+
+def draw_heading_with_icon(
+    c: canvas.Canvas,
+    x: float,
+    y: float,
+    title: str,
+    icon: Optional[Path],
+    *,
+    font: str = "Helvetica-Bold",
+    size: int = 12,
+    color=colors.black,
+    icon_w: float = 12,
+    icon_h: float = 12,
+    pad_x: float = 6,
+    underline_w: Optional[float] = None,
+    rule_color=colors.black,
+    rule_width: float = 1.0,
+    gap_below: float = 6.0,
+    baseline_tweak: float = 9.0,
+) -> float:
+    """يرسم عنوان قسم مع أيقونة صغيرة"""
+    draw_x = x
+    if icon and icon.is_file():
+        try:
+            img = ImageReader(str(icon))
+            c.drawImage(img, draw_x, y - icon_h, width=icon_w, height=icon_h, mask="auto")
+            draw_x += icon_w + pad_x
+        except Exception:
+            c.setFont(font, size)
+            c.drawString(draw_x, y - baseline_tweak, "•")
+            draw_x += _text_width("• ", font, size)
+
+    c.setFont(font, size)
+    c.setFillColor(color)
+    c.drawString(draw_x, y - baseline_tweak, title)
+
+    new_y = y - max(icon_h, size) - gap_below
+    if underline_w and underline_w > 0:
+        c.setStrokeColor(rule_color)
+        c.setLineWidth(rule_width)
+        c.line(x, new_y, x + underline_w, new_y)
+        new_y -= gap_below
+
+    return new_y
+
+
+# =========================
+# رسم سطر: أيقونة + نص + رابط
+# =========================
 
 def draw_icon_line(
     c: canvas.Canvas,
     x: float,
     y: float,
-    icon: Path | None,
-    value: str,
+    text: str,
     *,
-    icon_w: float = ICON_SIZE,
-    icon_h: float = ICON_SIZE,
-    pad_x: float = ICON_PAD_X,
-    size: int = LEFT_TEXT_SIZE,
-    valign: str = ICON_VALIGN,
-    text_dy: float = ICON_TEXT_DY,
-    line_gap: int | None = None,
-    max_w: float | None = None,
-    halign: str = "left",
-    container_w: float | None = None,
-    link_url: str | None = None,
+    icon: Optional[Path] = None,
+    font: str = "Helvetica",
+    size: int = 10,
+    color=colors.black,
+    icon_w: float = 10,
+    icon_h: float = 10,
+    pad_x: float = 6,
+    line_gap: float = 14,
+    link: Optional[str] = None,
+    max_w: Optional[float] = None,
 ) -> float:
-    """
-    Draws an icon followed by text, optionally wrapping and linking.
-
-    Returns:
-        float: Updated y-position after drawing.
-    """
-    value_font = LEFT_TEXT_FONT_BOLD if LEFT_TEXT_IS_BOLD else LEFT_TEXT_FONT
-    asc = pdfmetrics.getAscent(value_font) / 1000.0 * size
-    dsc = abs(pdfmetrics.getDescent(value_font)) / 1000.0 * size
-
-    # Draw icon or fallback bullet
+    """يرسم سطر (أيقونة + نص) مع رابط اختياري"""
+    draw_x = x
     if icon and icon.is_file():
         try:
             img = ImageReader(str(icon))
-            c.drawImage(img, x, y - icon_h, width=icon_w, height=icon_h, mask="auto")
+            c.drawImage(img, draw_x, y - icon_h + 1, width=icon_w, height=icon_h, mask="auto")
+            draw_x += icon_w + pad_x
         except Exception:
-            c.setFont(value_font, size + 2)
-            c.drawString(x, y, "•")
-    else:
-        c.setFont(value_font, size + 2)
-        c.drawString(x, y, "•")
+            pass
 
-    # Positioning text
-    text_x = x + icon_w + pad_x
-    half_text = (asc - dsc) / 2.0
-    baseline = y - (icon_h / 2.0 - half_text)
-    text_y = baseline + text_dy
+    c.setFont(font, size)
+    c.setFillColor(color)
+    txt = text or ""
+    c.drawString(draw_x, y - (size * 0.8), txt)
 
-    c.setFont(value_font, size)
-    c.setFillColor(colors.black)
+    if link:
+        tw = _text_width(txt, font, size)
+        c.linkURL(link, (draw_x, y - size, draw_x + tw, y + 2), relative=0)
 
-    # Handle text wrapping if applicable
-    if max_w is not None:
-        avail_w = max_w - (text_x - x)
-        if avail_w < 20:
-            avail_w = max(20, avail_w)
+    return y - line_gap
 
-        lines = wrap_text(value, value_font, size, avail_w)
-        cur_y = text_y
-        first_line_twidth = None
 
-        for i, ln in enumerate(lines):
-            c.drawString(text_x, cur_y, ln)
-            if i == 0 and link_url:
-                tw = pdfmetrics.stringWidth(ln, value_font, size)
-                first_line_twidth = tw
-                c.linkURL(
-                    link_url,
-                    (text_x, cur_y - dsc, text_x + tw, cur_y + asc * 0.2),
-                    relative=0,
-                    thickness=0,
-                )
-            cur_y -= (line_gap if line_gap is not None else LEADING_BODY)
-
-        block_h = (text_y - cur_y) + (line_gap if line_gap is not None else LEADING_BODY)
-        used_h = max(icon_h, block_h)
-        gap = max((line_gap or LEADING_BODY), used_h + 2)
-        return y - gap
-
-    # No wrapping, single line
-    c.drawString(text_x, text_y, value)
-    if link_url:
-        tw = pdfmetrics.stringWidth(value, value_font, size)
-        c.linkURL(link_url, (text_x, text_y - dsc, text_x + tw, text_y + asc * 0.2), relative=0, thickness=0)
-
-    used_h = max(icon_h, asc + dsc)
-    gap = max((line_gap or LEADING_BODY), used_h + 2)
-    return y - gap
-
+# =========================
+# info_line: سطر معلومات شخصية
+# =========================
 
 def info_line(
     c: canvas.Canvas,
     x: float,
     y: float,
-    key: str,
+    label: str,
     value: str,
-    max_w: float,
-    align_h: str = "left",
-    line_gap: int = LEFT_LINE_GAP,
-    size: int = LEFT_TEXT_SIZE,
+    *,
+    max_w: Optional[float] = None,
+    font: str = "Helvetica",
+    size: int = 10,
+    color=colors.black,
+    line_gap: float = 14,
 ) -> float:
-    """
-    Draws an information line with icon and text, adds link if social key.
+    lab_lc = (label or "").lower()
+    icon = DEFAULT_INFO_ICONS.get(lab_lc)
+    link = _maybe_make_link(value, label=lab_lc)
+    return draw_icon_line(c, x, y, value.strip(), icon=icon, font=font, size=size, color=color, line_gap=line_gap, link=link, max_w=max_w)
 
-    Args:
-        c (canvas.Canvas): The PDF canvas to draw on.
-        x (float): Starting x-coordinate.
-        y (float): Starting y-coordinate.
-        key (str): One of the predefined keys (e.g., "GitHub", "LinkedIn").
-        value (str): Text value to draw.
-        max_w (float): Maximum allowed width.
 
-    Returns:
-        float: Updated y-coordinate after drawing.
-    """
-    if not value:
-        return y
+# =========================
+# التصدير
+# =========================
 
-    display = value.strip()
-    link = None
-
-    if key in ("GitHub", "LinkedIn"):
-        got = extract_social_handle(key, display)
-        if got:
-            display, link = got
-        else:
-            v = display
-            lowers = v.lower()
-            for pref in ("github:", "linkedin:"):
-                if lowers.startswith(pref):
-                    v = v[len(pref):].strip()
-                    break
-            if v.startswith(("http://", "https://")):
-                v = v.split("://", 1)[1]
-            if v.startswith("www."):
-                v = v[4:]
-            v = v.lstrip("@").strip()
-
-            if key == "GitHub":
-                if v.lower().startswith("github.com/"):
-                    v = v.split("/", 1)[1]
-                v = v.split("/")[0]
-                display = v
-                link = f"https://github.com/{v}" if v else None
-
-            elif key == "LinkedIn":
-                if v.lower().startswith("linkedin.com/"):
-                    parts = v.split("/", 2)
-                    if len(parts) >= 3:
-                        v = parts[2]
-                v = v.split("/")[0]
-                display = v
-                link = f"https://www.linkedin.com/in/{v}" if v else None
-
-    icon = ICON_PATHS.get(key)
-
-    return draw_icon_line(
-        c=c, x=x, y=y, icon=icon, value=display,
-        icon_w=ICON_SIZE, icon_h=ICON_SIZE,
-        pad_x=ICON_PAD_X, size=size,
-        valign=ICON_VALIGN, text_dy=ICON_TEXT_DY,
-        line_gap=line_gap, max_w=max_w,
-        halign=align_h, container_w=max_w,
-        link_url=link,
-    )
+__all__ = [
+    "ICONS_DIR",
+    "icon_path",
+    "get_section_icon",
+    "draw_heading_with_icon",
+    "draw_icon_line",
+    "info_line",
+    "SECTION_ICON_PATHS",
+    "DEFAULT_INFO_ICONS",
+    "ICON_PATHS",
+]

@@ -6,40 +6,37 @@ skills, languages, and additional custom sections.
 from reportlab.pdfgen import canvas
 from reportlab.lib import colors
 
-from .config import *
-from .icons import ICON_PATHS, draw_icon_line
+from .config import *  # uses LEFT_* and general styles
+from .icons import ICON_PATHS, draw_icon_line, get_section_icon, draw_heading_with_icon
 from .text import wrap_text, draw_par
 from .social import extract_social_handle
+from .labels import t
+from .config import UI_LANG
 
 
-
-def info_line(c, x, y, key: str, value: str, max_w: float, line_gap=LEFT_LINE_GAP, size=LEFT_TEXT_SIZE):
+def info_line(
+    c: canvas.Canvas,
+    x: float,
+    y: float,
+    key: str,
+    value: str,
+    max_w: float,
+    line_gap: float = LEFT_LINE_GAP,
+    size: int = LEFT_TEXT_SIZE,
+) -> float:
     """
-    Draws a single line of text with an optional icon and clickable hyperlink for specific keys.
-
-    Args:
-        c: Canvas or drawing context.
-        x (float): X-coordinate for the starting point.
-        y (float): Y-coordinate for the starting point.
-        key (str): Label key (e.g., "GitHub", "LinkedIn", "Phone").
-        value (str): Raw input string to be processed.
-        max_w (float): Maximum allowed width for the rendered line.
-        line_gap (float, optional): Line spacing. Defaults to LEFT_LINE_GAP.
-        size (float, optional): Font size. Defaults to LEFT_TEXT_SIZE.
-
-    Returns:
-        Rendered line with optional link and icon, if applicable.
-
-    Notes:
-        - Only GitHub and LinkedIn values are transformed into clickable links.
-        - Non-social fields are rendered as plain text.
+    Draw a single line with icon + text + optional hyperlink (for social).
+    Adjusted to match icons.draw_icon_line signature.
     """
-    icon = ICON_PATHS.get(key)
     raw = (value or "").strip()
     display = raw
     link = None
 
-    # Only transform social media fields into links
+    # Normalize key for icon lookup
+    key_lc = (key or "").strip().lower()
+    icon = ICON_PATHS.get(key_lc) or ICON_PATHS.get(key)  # fallback for original keys
+
+    # Transform social fields into links / clean handles
     if key in ("GitHub", "LinkedIn"):
         got = extract_social_handle(key, raw)
         if got:
@@ -47,14 +44,10 @@ def info_line(c, x, y, key: str, value: str, max_w: float, line_gap=LEFT_LINE_GA
         else:
             import re
             v = raw.lower().strip()
-
-            # Remove leading identifiers like 'github:' or 'linkedin:'
             for pref in ("github:", "linkedin:"):
                 if v.startswith(pref):
                     v = v[len(pref):].strip()
                     break
-
-            # Clean URL prefixes
             v = re.sub(r'^(https?://)?(www\.)?', '', v, flags=re.I).strip()
             v = v.lstrip('@').strip()
 
@@ -76,10 +69,20 @@ def info_line(c, x, y, key: str, value: str, max_w: float, line_gap=LEFT_LINE_GA
                     display = v
                     link = f"https://www.linkedin.com/in/{v}"
 
+    # Use draw_icon_line(text first, then pass icon, link)
     return draw_icon_line(
-        c, x, y, icon, display,
-        icon_w=ICON_SIZE, icon_h=ICON_SIZE, pad_x=ICON_PAD_X, size=size,
-        line_gap=line_gap, max_w=max_w, link_url=link
+        c=c,
+        x=x,
+        y=y,
+        text=display,
+        icon=icon,
+        icon_w=ICON_SIZE,
+        icon_h=ICON_SIZE,
+        pad_x=ICON_PAD_X,
+        size=size,
+        line_gap=line_gap,
+        max_w=max_w,
+        link=link,
     )
 
 
@@ -88,7 +91,7 @@ def draw_left_extra_sections(
     inner_x: float,
     inner_w: float,
     cursor: float,
-    sections_left: list[dict]
+    sections_left: list[dict],
 ) -> float:
     """Draws user-defined sections on the left column."""
     for sec in (sections_left or []):
@@ -96,20 +99,25 @@ def draw_left_extra_sections(
         lines = [str(x).strip() for x in (sec.get("lines") or []) if str(x).strip()]
         if not title or not lines:
             continue
+
         cursor -= LEFT_SEC_TITLE_TOP_GAP
-        c.setFont("Helvetica-Bold", LEFT_SEC_HEADING_SIZE)
-        c.setFillColor(colors.black)
-        if LEFT_SEC_TITLE_ALIGN == "center":
-            c.drawCentredString(inner_x + inner_w / 2, cursor, title)
-        elif LEFT_SEC_TITLE_ALIGN == "right":
-            c.drawRightString(inner_x + inner_w, cursor, title)
-        else:
-            c.drawString(inner_x, cursor, title)
-        cursor -= LEFT_SEC_TITLE_BOTTOM_GAP
-        c.setStrokeColor(LEFT_SEC_RULE_COLOR)
-        c.setLineWidth(LEFT_SEC_RULE_WIDTH)
-        c.line(inner_x, cursor, inner_x + inner_w, cursor)
+        # Heading + icon + underline
+        cursor = draw_heading_with_icon(
+            c=c,
+            x=inner_x,
+            y=cursor,
+            title=title,
+            icon=None,  # custom sections: no icon by default
+            font="Helvetica-Bold",
+            size=LEFT_SEC_HEADING_SIZE,
+            color=HEADING_COLOR,
+            underline_w=inner_w,
+            rule_color=LEFT_SEC_RULE_COLOR,
+            rule_width=LEFT_SEC_RULE_WIDTH,
+            gap_below=LEFT_SEC_TITLE_BOTTOM_GAP / 2,
+        )
         cursor -= LEFT_SEC_RULE_TO_LIST_GAP
+
         c.setFont("Helvetica", LEFT_SEC_TEXT_SIZE)
         c.setFillColor(colors.black)
         for ln in lines:
@@ -137,21 +145,33 @@ def draw_left_column(
     cursor: float,
 ) -> float:
     """Draws the full left column including contact, skills, and language sections."""
+    # -------- Name --------
     if name:
         c.setFont("Helvetica-Bold", NAME_SIZE)
         c.setFillColor(HEADING_COLOR)
         c.drawCentredString(inner_x + inner_w / 2, cursor, name)
         cursor -= NAME_GAP
 
+    # -------- Contact --------
     has_contact = any([location, phone, email, birthdate, github, linkedin])
     if has_contact:
-        c.setFont("Helvetica-Bold", HEADING_SIZE)
-        c.setFillColor(HEADING_COLOR)
-        c.drawCentredString(inner_x + inner_w / 2, cursor, "Pers\u00f6nliche Informationen")
-        cursor -= 6
-        from .shapes import draw_rule
-        draw_rule(c, inner_x, cursor, inner_w)
-        cursor -= 6
+        cursor -= LEFT_SEC_TITLE_TOP_GAP
+        # Heading + icon (pin) optional — نستخدم العنوان الديناميكي
+        cursor = draw_heading_with_icon(
+            c=c,
+            x=inner_x,
+            y=cursor,
+            title=t("personal_info", UI_LANG),
+            icon=None,  # يمكنك لاحقًا وضع أيقونة مخصّصة لعنوان "Personal Information"
+            font="Helvetica-Bold",
+            size=LEFT_SEC_HEADING_SIZE,
+            color=HEADING_COLOR,
+            underline_w=inner_w,
+            rule_color=LEFT_SEC_RULE_COLOR,
+            rule_width=LEFT_SEC_RULE_WIDTH,
+            gap_below=LEFT_SEC_TITLE_BOTTOM_GAP / 2,
+        )
+        cursor -= LEFT_SEC_RULE_TO_LIST_GAP
 
         if location:
             cursor = info_line(c, inner_x, cursor, "Ort", location, inner_w)
@@ -168,21 +188,25 @@ def draw_left_column(
 
         cursor -= LEFT_AFTER_CONTACT_GAP
 
+    # -------- Key Skills --------
     if skills:
         cursor -= LEFT_SEC_TITLE_TOP_GAP
-        c.setFont("Helvetica-Bold", LEFT_SEC_HEADING_SIZE)
-        c.setFillColor(HEADING_COLOR)
-        if LEFT_SEC_TITLE_ALIGN == "center":
-            c.drawCentredString(inner_x + inner_w / 2, cursor, "Technische F\u00e4higkeiten")
-        elif LEFT_SEC_TITLE_ALIGN == "right":
-            c.drawRightString(inner_x + inner_w, cursor, "Technische F\u00e4higkeiten")
-        else:
-            c.drawString(inner_x, cursor, "Technische F\u00e4higkeiten")
-        cursor -= LEFT_SEC_TITLE_BOTTOM_GAP
-        c.setStrokeColor(LEFT_SEC_RULE_COLOR)
-        c.setLineWidth(LEFT_SEC_RULE_WIDTH)
-        c.line(inner_x, cursor, inner_x + inner_w, cursor)
+        cursor = draw_heading_with_icon(
+            c=c,
+            x=inner_x,
+            y=cursor,
+            title=t("key_skills", UI_LANG),
+            icon=get_section_icon("key_skills"),
+            font="Helvetica-Bold",
+            size=LEFT_SEC_HEADING_SIZE,
+            color=HEADING_COLOR,
+            underline_w=inner_w,
+            rule_color=LEFT_SEC_RULE_COLOR,
+            rule_width=LEFT_SEC_RULE_WIDTH,
+            gap_below=LEFT_SEC_TITLE_BOTTOM_GAP / 2,
+        )
         cursor -= LEFT_SEC_RULE_TO_LIST_GAP
+
         c.setFont("Helvetica", LEFT_SEC_TEXT_SIZE)
         c.setFillColor(colors.black)
         max_text_w = inner_w - (LEFT_SEC_TEXT_X_OFFSET + 2)
@@ -195,26 +219,43 @@ def draw_left_column(
                 cursor -= LEFT_SEC_LINE_GAP
         cursor -= LEFT_SEC_SECTION_GAP
 
+    # -------- Languages --------
     if languages:
         cursor -= LEFT_SEC_TITLE_TOP_GAP
-        c.setFont("Helvetica-Bold", LEFT_SEC_HEADING_SIZE)
-        if LEFT_SEC_TITLE_ALIGN == "center":
-            c.drawCentredString(inner_x + inner_w / 2, cursor, "Sprachen")
-        elif LEFT_SEC_TITLE_ALIGN == "right":
-            c.drawRightString(inner_x + inner_w, cursor, "Sprachen")
-        else:
-            c.drawString(inner_x, cursor, "Sprachen")
-        cursor -= LEFT_SEC_TITLE_BOTTOM_GAP
-        c.setStrokeColor(LEFT_SEC_RULE_COLOR)
-        c.setLineWidth(LEFT_SEC_RULE_WIDTH)
-        c.line(inner_x, cursor, inner_x + inner_w, cursor)
-        cursor -= LEFT_SEC_RULE_TO_LIST_GAP
-        c.setFont("Helvetica", LEFT_SEC_TEXT_SIZE)
-        langs = ", ".join(languages)
-        cursor = draw_par(
-            c, inner_x, cursor, [langs], "Helvetica", LEFT_SEC_TEXT_SIZE,
-            inner_w, "left", False, LEFT_SEC_LINE_GAP
+        cursor = draw_heading_with_icon(
+            c=c,
+            x=inner_x,
+            y=cursor,
+            title=t("languages", UI_LANG),
+            icon=get_section_icon("languages"),
+            font="Helvetica-Bold",
+            size=LEFT_SEC_HEADING_SIZE,
+            color=HEADING_COLOR,
+            underline_w=inner_w,
+            rule_color=LEFT_SEC_RULE_COLOR,
+            rule_width=LEFT_SEC_RULE_WIDTH,
+            gap_below=LEFT_SEC_TITLE_BOTTOM_GAP / 2,
         )
+        cursor -= LEFT_SEC_RULE_TO_LIST_GAP
+
+        # النص بالأسود
+        c.setFillColor(colors.black)
+        c.setFont("Helvetica", LEFT_SEC_TEXT_SIZE)
+
+        # اطبع كل لغة كسطر مستقل مع لفّ أسطر
+        max_text_w = inner_w - (LEFT_SEC_TEXT_X_OFFSET + 2)
+        for lang in languages:
+            wrapped = wrap_text(str(lang), "Helvetica", LEFT_SEC_TEXT_SIZE, max_text_w)
+            for i, ln in enumerate(wrapped):
+                if i == 0:
+                    # نقطة (bullet) صغيرة مثل قسم المهارات
+                    c.circle(inner_x + LEFT_SEC_BULLET_X_OFFSET, cursor + 3, LEFT_SEC_BULLET_RADIUS, stroke=1, fill=1)
+                c.drawString(inner_x + LEFT_SEC_TEXT_X_OFFSET, cursor, ln)
+                cursor -= LEFT_SEC_LINE_GAP
+
         cursor -= LEFT_SEC_SECTION_GAP
+
+
+
 
     return cursor
